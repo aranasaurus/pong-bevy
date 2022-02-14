@@ -104,7 +104,7 @@ fn ball_collision(mut ball_q: Query<(&Transform, &mut Velocity), With<Ball>>, pa
                 println!("top/bottom");
                 velocity.0.y *= - 1.0;
             }
-            None => break
+            None => continue
         }
     }
     println!("ball_collision: {}", count);
