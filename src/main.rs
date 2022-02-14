@@ -10,7 +10,8 @@ const BALL_SIZE: f32 = SCREEN_WIDTH * 0.03;
 const PADDLE_WIDTH: f32 = BALL_SIZE * 0.75;
 const PADDLE_HEIGHT: f32 = SCREEN_HEIGHT * 0.24;
 const TIME_STEP: f32 = 1.0 / 60.0;
-const SPEED: f32 = 250.0 * TIME_STEP;
+const BALL_SPEED: f32 = 250.0 * TIME_STEP;
+const PADDLE_SPEED: f32 = BALL_SPEED * 1.66;
 
 fn main() {
     App::new()
@@ -24,9 +25,7 @@ fn main() {
         })
         .add_plugins(DefaultPlugins)
 
-        .add_startup_system(setup_camera)
-        .add_startup_system(setup_ball)
-        .add_startup_system(setup_paddles)
+        .add_startup_system(setup)
 
         .add_system_set(
             SystemSet::new()
@@ -39,8 +38,22 @@ fn main() {
         .run();
 }
 
-fn setup_camera(mut commands: Commands) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+#[derive(Component)]
+struct Court {
+    top: f32,
+    bottom: f32
+}
+
+#[derive(Component)]
+struct Player {
+    binds: Binds,
+    speed: f32,
+    score: usize
+}
+
+struct Binds {
+    up: KeyCode,
+    down: KeyCode
 }
 
 #[derive(Component)]
@@ -49,7 +62,15 @@ struct Ball;
 #[derive(Component)]
 struct Velocity(Vec3);
 
-fn setup_ball(mut commands: Commands) {
+fn setup(mut commands: Commands) {
+    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+
+    // court
+    commands
+        .spawn()
+        .insert(Court { top: SCREEN_HEIGHT * 0.5, bottom: -SCREEN_HEIGHT * 0.5 });
+
+    // ball
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -59,12 +80,41 @@ fn setup_ball(mut commands: Commands) {
             },
             ..Default::default()
         })
-        .insert(Velocity(Vec3::new(SPEED, SPEED, 0.0)))
+        .insert(Velocity(Vec3::new(BALL_SPEED, BALL_SPEED, 0.0)))
         .insert(Ball);
 
-    commands
-        .spawn()
-        .insert(Court { top: SCREEN_HEIGHT * 0.5, bottom: -SCREEN_HEIGHT * 0.5 });
+    // paddles
+    let paddle_size = Vec2::new(PADDLE_WIDTH, PADDLE_HEIGHT);
+
+    // player 1
+    commands.spawn_bundle(SpriteBundle {
+        sprite: Sprite {
+            color: Color::rgb(0.9, 0.9, 0.9),
+            custom_size: Some(paddle_size),
+            ..Default::default()
+        },
+        transform: Transform::from_xyz(-SCREEN_WIDTH * 0.5 + PADDLE_WIDTH * 2.0, 0.0, 0.0),
+        ..Default::default()
+    }).insert(Player {
+        binds: Binds { up: KeyCode::W, down: KeyCode::S },
+        speed: PADDLE_SPEED,
+        score: 0,
+    });
+
+    // player 2
+    commands.spawn_bundle(SpriteBundle {
+        sprite: Sprite {
+            color: Color::rgb(0.9, 0.9, 0.9),
+            custom_size: Some(paddle_size),
+            ..Default::default()
+        },
+        transform: Transform::from_xyz(SCREEN_WIDTH * 0.5 - PADDLE_WIDTH * 2.0, 0.0, 0.0),
+        ..Default::default()
+    }).insert(Player {
+        binds: Binds { up: KeyCode::Up, down: KeyCode::Down },
+        speed: PADDLE_SPEED,
+        score: 0,
+    });
 }
 
 fn ball_movement(mut ball_q: Query<(&mut Transform, &mut Velocity), With<Ball>>, court_q: Query<&Court>) {
@@ -90,85 +140,43 @@ fn ball_movement(mut ball_q: Query<(&mut Transform, &mut Velocity), With<Ball>>,
     }
 }
 
-fn ball_collision(mut ball_q: Query<(&Transform, &mut Velocity), With<Ball>>, paddle_q: Query<&Transform, With<Player>>) {
-    let (ball_transform, mut velocity) = ball_q.single_mut();
-    let mut count = 0;
+fn ball_collision(mut ball_q: Query<(&mut Transform, &mut Velocity), With<Ball>>, paddle_q: Query<&Transform, (With<Player>, Without<Ball>)>) {
+    let (mut ball_transform, mut velocity) = ball_q.single_mut();
     for transform in paddle_q.iter() {
-        count += 1;
-        match collide(ball_transform.translation, Vec2::new(BALL_SIZE, BALL_SIZE), transform.translation, Vec2::new(PADDLE_WIDTH, PADDLE_HEIGHT)) {
-            Some(Collision::Left) | Some(Collision::Right) => {
-                println!("left/right");
-                velocity.0.x *= - 1.0;
+        let horizontal_adjust = (BALL_SIZE * 0.5) + (PADDLE_WIDTH * 0.5);
+        let vertical_adjust = (BALL_SIZE * 0.5) + (PADDLE_HEIGHT * 0.5);
+        while let Some(collision) = collide(ball_transform.translation, Vec2::new(BALL_SIZE, BALL_SIZE), transform.translation, Vec2::new(PADDLE_WIDTH, PADDLE_HEIGHT)) {
+            match collision {
+                Collision::Left => {
+                    velocity.0.x *= -1.0;
+                    ball_transform.translation.x = transform.translation.x - horizontal_adjust;
+                }
+                Collision::Right => {
+                    velocity.0.x *= -1.0;
+                    ball_transform.translation.x = transform.translation.x + horizontal_adjust;
+                }
+                Collision::Top => {
+                    velocity.0.y *= -1.0;
+                    ball_transform.translation.y = transform.translation.y + vertical_adjust;
+                }
+                Collision::Bottom => {
+                    velocity.0.y *= -1.0;
+                    ball_transform.translation.y = transform.translation.y - vertical_adjust;
+                }
             }
-            Some(Collision::Top) | Some(Collision::Bottom) => {
-                println!("top/bottom");
-                velocity.0.y *= - 1.0;
-            }
-            None => continue
         }
     }
-    println!("ball_collision: {}", count);
-}
-
-#[derive(Component)]
-struct Court {
-    top: f32,
-    bottom: f32
-}
-
-#[derive(Component)]
-struct Player {
-    binds: Binds,
-    score: usize
-}
-
-struct Binds {
-    up: KeyCode,
-    down: KeyCode
-}
-
-fn setup_paddles(mut commands: Commands) {
-    let paddle_size = Vec2::new(PADDLE_WIDTH, PADDLE_HEIGHT);
-
-    commands.spawn_bundle(SpriteBundle {
-        sprite: Sprite {
-            color: Color::rgb(0.9, 0.9, 0.9),
-            custom_size: Some(paddle_size),
-            ..Default::default()
-        },
-        transform: Transform::from_xyz(-SCREEN_WIDTH * 0.5 + PADDLE_WIDTH * 2.0, 0.0, 0.0),
-        ..Default::default()
-    }).insert(Player {
-        binds: Binds { up: KeyCode::W, down: KeyCode::S },
-        score: 0
-    });
-
-    commands.spawn_bundle(SpriteBundle {
-        sprite: Sprite {
-            color: Color::rgb(0.9, 0.9, 0.9),
-            custom_size: Some(paddle_size),
-            ..Default::default()
-        },
-        transform: Transform::from_xyz(SCREEN_WIDTH * 0.5 - PADDLE_WIDTH * 2.0, 0.0, 0.0),
-        ..Default::default()
-    }).insert(Player {
-        binds: Binds { up: KeyCode::Up, down: KeyCode::Down },
-        score: 0
-    });
 }
 
 fn paddle_movement(keyboard: Res<Input<KeyCode>>, mut paddle_q: Query<(&mut Transform, &Player)>, court_q: Query<&Court>) {
     let court = court_q.single();
-    let mut count = 0;
     for (mut transform, player) in paddle_q.iter_mut() {
-        count += 1;
         if keyboard.pressed(player.binds.up) {
-            transform.translation.y += SPEED;
+            transform.translation.y += player.speed;
         } else if keyboard.pressed(player.binds.down) {
-            transform.translation.y -= SPEED;
+            transform.translation.y -= player.speed;
         }
 
         transform.translation.y = transform.translation.y.max(court.bottom + PADDLE_HEIGHT * 0.5).min(court.top - PADDLE_HEIGHT * 0.5)
     }
-    println!("paddle_movement: {}", count)
 }
